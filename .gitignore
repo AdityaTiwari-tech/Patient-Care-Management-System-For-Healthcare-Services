@@ -1,0 +1,6 @@
+.env
+patient_care/
+__pycache__/
+*.pyc
+.chroma/
+.streamlit/secrets.toml
