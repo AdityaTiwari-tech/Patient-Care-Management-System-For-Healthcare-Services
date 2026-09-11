@@ -48,10 +48,92 @@ _ECG_SVG = """
 """
 
 
+THEME_KEY = "app_theme"
+DEFAULT_THEME = "light"
+
+# Token values for both palettes, derived from the existing SmartCare
+# brand colors (ink/clay/sage/parchment) already used across styles.css,
+# views/charts.py and services/notification_service.py — not a generic
+# dark mode. Dark-mode accents (clay/sage) are brightened relative to
+# their light-mode hex, since the light-mode values read muddy on a dark
+# background; see FUTURE_ROADMAP.md item 1 / theme_tokens.html for the
+# full design rationale and a visual preview of both palettes.
+#
+# NOTE: styles.css itself still needs its hardcoded hex values converted
+# to var(--token) references for this toggle to reach every element it
+# defines (cards, buttons, badges, etc.) — these :root variables are
+# injected on every render below, but a CSS rule that never references
+# them won't change color just because the variable now exists. Anything
+# styled directly from Python (this file, views/charts.py) already reads
+# these tokens.
+THEME_TOKENS = {
+    "light": {
+        "bg": "#F7F5EF", "surface": "#FFFFFF", "surface-2": "#F1EEE4",
+        "ink": "#0E3B36", "clay": "#E1614A", "sage": "#3E7C6E",
+        "slate": "#5B6864", "success": "#4C9A72", "sand": "#E8A87C",
+        "sage-mist": "#9AB8AF", "alert": "#C0503D",
+        "text": "#23302D", "text-muted": "#5B6864", "border": "#E3E0D6",
+        "shadow": "0 2px 10px rgba(14,59,54,0.08)",
+    },
+    "dark": {
+        "bg": "#0B1614", "surface": "#12211E", "surface-2": "#182B27",
+        "ink": "#EDEAE0", "clay": "#FF8268", "sage": "#6FBFA8",
+        "slate": "#9FAFA9", "success": "#6FCB94", "sand": "#F0C39A",
+        "sage-mist": "#4E6E66", "alert": "#E2725C",
+        "text": "#EDEAE0", "text-muted": "#9FAFA9", "border": "rgba(237,234,224,0.12)",
+        "shadow": "0 2px 16px rgba(0,0,0,0.45)",
+    },
+}
+
+
+def get_theme() -> str:
+    """Current theme for this session — 'light' or 'dark'. Session-scoped
+    only (not persisted to the user's account); see FUTURE_ROADMAP.md item
+    1 for the note on adding a users.theme_preference column if this
+    should survive logout."""
+    return st.session_state.get(THEME_KEY, DEFAULT_THEME)
+
+
+def set_theme(theme: str):
+    st.session_state[THEME_KEY] = theme if theme in THEME_TOKENS else DEFAULT_THEME
+
+
+def toggle_theme():
+    """Flips light<->dark and reruns — call this from the sidebar toggle
+    button. A rerun is required (not automatic) because load_css() reads
+    get_theme() fresh on every render; there's no client-side JS involved."""
+    set_theme("dark" if get_theme() == "light" else "light")
+    st.rerun()
+
+
+def _theme_css_vars(theme: str) -> str:
+    tokens = THEME_TOKENS.get(theme, THEME_TOKENS[DEFAULT_THEME])
+    lines = "".join(f"--{name}:{value};" for name, value in tokens.items())
+    return f":root{{{lines}}}"
+
+
+def theme_toggle_button(label_light: str = "🌙 Dark mode", label_dark: str = "☀️ Light mode"):
+    """Renders a single button that flips the theme and reruns. Drop this
+    into app.py's sidebar (or anywhere else) — it's the only UI needed to
+    drive get_theme()/load_css()."""
+    label = label_dark if get_theme() == "dark" else label_light
+    if st.button(label, key="theme_toggle_btn", use_container_width=True):
+        toggle_theme()
+
+
 def load_css():
+    """Loads assets/styles.css, then injects a :root{...} block of CSS
+    custom properties for the current theme (see THEME_TOKENS/get_theme()
+    above). The variable block is emitted AFTER styles.css's own content
+    in the same <style> tag so it wins the cascade for any rule in
+    styles.css that already references var(--token-name) — existing
+    hardcoded-hex rules in styles.css are unaffected until they're
+    migrated to var() references (see the NOTE on THEME_TOKENS)."""
     css_path = os.path.join(os.path.dirname(__file__), "..", "assets", "styles.css")
     with open(css_path, "r") as f:
-        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+        base_css = f.read()
+    theme_css = _theme_css_vars(get_theme())
+    st.markdown(f"<style>{base_css}\n{theme_css}</style>", unsafe_allow_html=True)
 
 
 def ecg_html() -> str:
@@ -88,7 +170,7 @@ def empty_state(icon: str, title: str, message: str = None, col=None):
     )
 
 
-def report_preview(report: dict, height: int = 640):
+def report_preview(report: dict, height: int = 640, language: str = "English"):
     """Renders a patient report exactly as it will print/download — reuses
     services/report_pdf.py's own HTML template (the SAME template
     xhtml2pdf converts into the downloadable PDF), so a preview can never
@@ -98,9 +180,12 @@ def report_preview(report: dict, height: int = 640):
     would otherwise leak into (and clash with) the app's own CSS.
     `report` is either a real saved report (services/report_service.py's
     get_report()) or an in-progress draft dict built from a form's
-    current values — render_report_html() doesn't care which."""
+    current values — render_report_html() doesn't care which.
+    `language` controls only the template's labels/headers — clinical
+    data (drug names, dosages, vitals) always renders as stored; see
+    services/report_pdf.py's REPORT_LABELS docstring."""
     from services.report_pdf import render_report_html
-    html = render_report_html(report)
+    html = render_report_html(report, language)
     components.html(html, height=height, scrolling=True)
 
 
@@ -332,7 +417,63 @@ _DEFAULT_BACKGROUND = (
     "linear-gradient(165deg,#F7F5EF 0%,#EFEBE0 100%)"
 )
 
+# Dark-mode counterparts of _SECTION_BACKGROUNDS above — same radial-accent
+# structure and section-to-section variation, just recolored onto a dark
+# base so each screen keeps its distinct identity instead of collapsing
+# into one flat dark gray. Accent opacities are bumped up slightly (dark
+# backgrounds need a bit more pop for the same radial glow to read).
+_SECTION_BACKGROUNDS_DARK = {
+    "My Health 🫀": (
+        "radial-gradient(circle at 88% 6%, rgba(255,130,104,0.14) 0%, transparent 42%),"
+        "radial-gradient(circle at 6% 94%, rgba(111,191,168,0.16) 0%, transparent 48%),"
+        "linear-gradient(165deg,#0B1614 0%,#0E1D1A 50%,#122622 100%)"
+    ),
+    "Appointments": (
+        "radial-gradient(circle at 90% 10%, rgba(111,191,168,0.12) 0%, transparent 42%),"
+        "radial-gradient(circle at 8% 90%, rgba(255,130,104,0.16) 0%, transparent 48%),"
+        "linear-gradient(165deg,#12100C 0%,#181510 50%,#1E1912 100%)"
+    ),
+    "Doctors": (
+        "radial-gradient(circle at 90% 8%, rgba(255,130,104,0.12) 0%, transparent 42%),"
+        "radial-gradient(circle at 8% 92%, rgba(111,191,168,0.18) 0%, transparent 48%),"
+        "linear-gradient(165deg,#0C1614 0%,#101E1A 50%,#142720 100%)"
+    ),
+    "Doctor Portal": (
+        "radial-gradient(circle at 88% 8%, rgba(255,130,104,0.12) 0%, transparent 42%),"
+        "radial-gradient(circle at 8% 92%, rgba(111,191,168,0.18) 0%, transparent 48%),"
+        "linear-gradient(165deg,#0D1815 0%,#111F1B 50%,#15281F 100%)"
+    ),
+    "Admin Console": (
+        "radial-gradient(circle at 90% 10%, rgba(237,234,224,0.10) 0%, transparent 42%),"
+        "radial-gradient(circle at 8% 90%, rgba(255,130,104,0.10) 0%, transparent 48%),"
+        "linear-gradient(165deg,#0E1210 0%,#141813 50%,#191E17 100%)"
+    ),
+    "Smart Care AI": (
+        "radial-gradient(circle at 90% 8%, rgba(111,191,168,0.14) 0%, transparent 42%),"
+        "radial-gradient(circle at 8% 92%, rgba(255,130,104,0.12) 0%, transparent 48%),"
+        "linear-gradient(165deg,#100F16 0%,#151420 50%,#1A1A2A 100%)"
+    ),
+    "Medications": (
+        "radial-gradient(circle at 88% 10%, rgba(111,191,168,0.14) 0%, transparent 42%),"
+        "radial-gradient(circle at 10% 90%, rgba(255,130,104,0.14) 0%, transparent 48%),"
+        "linear-gradient(165deg,#0E1610 0%,#131E15 50%,#17271A 100%)"
+    ),
+    "Pharmacy 💊": (
+        "radial-gradient(circle at 88% 10%, rgba(111,191,168,0.14) 0%, transparent 42%),"
+        "radial-gradient(circle at 10% 90%, rgba(255,130,104,0.14) 0%, transparent 48%),"
+        "linear-gradient(165deg,#0E1610 0%,#131E15 50%,#17271A 100%)"
+    ),
+}
+_DEFAULT_BACKGROUND_DARK = (
+    "radial-gradient(circle at 15% 15%, rgba(111,191,168,0.12) 0%, transparent 42%),"
+    "radial-gradient(circle at 88% 88%, rgba(255,130,104,0.10) 0%, transparent 48%),"
+    "linear-gradient(165deg,#0B1614 0%,#101B18 100%)"
+)
+
 
 def set_page_background(section: str):
-    gradient = _SECTION_BACKGROUNDS.get(section, _DEFAULT_BACKGROUND)
+    if get_theme() == "dark":
+        gradient = _SECTION_BACKGROUNDS_DARK.get(section, _DEFAULT_BACKGROUND_DARK)
+    else:
+        gradient = _SECTION_BACKGROUNDS.get(section, _DEFAULT_BACKGROUND)
     st.markdown(f"<style>.stApp{{ background:{gradient}; }}</style>", unsafe_allow_html=True)

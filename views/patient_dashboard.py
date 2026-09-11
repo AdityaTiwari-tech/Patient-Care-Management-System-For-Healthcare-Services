@@ -151,22 +151,39 @@ def _report_download_picker(rxs: list[dict]):
     st.markdown("---")
 
 
+_REPORT_LANGUAGES = list(report_pdf.REPORT_LABELS.keys())
+_REPORT_FORMATS = {"PDF": "pdf", "PNG image": "png", "JPG image": "jpg"}
+
+
 def _download_report_button(prescription_id: int):
     """Patients can only READ and export a report — no edit/delete
     controls appear here at all; those live exclusively in
     views/doctor_portal.py's Patient report tab. Preview and Download are
     independent toggles: Preview renders the SAME HTML template Download
-    turns into a PDF (see views/components.report_preview), just inline
+    turns into a file (see views/components.report_preview), just inline
     and without needing xhtml2pdf, so a patient can check a report before
-    committing to a download."""
+    committing to a download. Language and format only change how the
+    document is presented — clinical data (drug names, dosages, vitals)
+    is identical across every language/format, per report_pdf.py's
+    REPORT_LABELS boundary."""
     preview_key = f"patient_report_preview_{prescription_id}"
     dl_key = f"patient_report_dl_{prescription_id}"
+    lang_key = f"patient_report_lang_{prescription_id}"
+    fmt_key = f"patient_report_fmt_{prescription_id}"
+
+    c0a, c0b = st.columns(2)
+    language = c0a.selectbox(
+        "Report language", _REPORT_LANGUAGES, key=lang_key, label_visibility="collapsed",
+    )
+    format_label = c0b.selectbox(
+        "Format", list(_REPORT_FORMATS.keys()), key=fmt_key, label_visibility="collapsed",
+    )
 
     c1, c2 = st.columns(2)
     if c1.button("👁️ Preview", key=f"patient_report_preview_btn_{prescription_id}", use_container_width=True):
         st.session_state[preview_key] = not st.session_state.get(preview_key, False)
         st.rerun()
-    if c2.button("⬇️ Download PDF", key=f"patient_report_btn_{prescription_id}", use_container_width=True):
+    if c2.button(f"⬇️ Download {format_label}", key=f"patient_report_btn_{prescription_id}", use_container_width=True):
         st.session_state[dl_key] = True
         st.rerun()
 
@@ -175,21 +192,28 @@ def _download_report_button(prescription_id: int):
         if not full:
             st.error("This report could not be loaded.")
         else:
-            report_preview(full, height=600)
+            report_preview(full, height=600, language=language)
 
     if st.session_state.get(dl_key):
         full = report_service.get_report(prescription_id)
         if not full:
             st.error("This report could not be loaded.")
             return
+        fmt = _REPORT_FORMATS[format_label]
         try:
-            pdf_bytes = report_pdf.render_report_pdf(full)
+            if fmt == "pdf":
+                data, mime, ext = report_pdf.render_report_pdf(full, language), "application/pdf", "pdf"
+            else:
+                data, mime, ext = (
+                    report_pdf.render_report_image(full, fmt=fmt, language=language),
+                    f"image/{'jpeg' if fmt == 'jpg' else fmt}", fmt,
+                )
         except RuntimeError as e:
             st.error(str(e))
             return
         st.download_button(
-            "Save PDF", data=pdf_bytes,
-            file_name=f"report_{prescription_id}.pdf", mime="application/pdf",
+            f"Save {format_label}", data=data,
+            file_name=f"report_{prescription_id}.{ext}", mime=mime,
             key=f"patient_report_confirm_{prescription_id}",
         )
 

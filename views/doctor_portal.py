@@ -657,20 +657,40 @@ def _report_list(doctor_id: int, patient_id: int, patient_name: str, reports: li
                 _edit_report_form(rx["id"], patient_name)
 
 
+_REPORT_LANGUAGES = list(report_pdf.REPORT_LABELS.keys())
+_REPORT_FORMATS = {"PDF": "pdf", "PNG image": "png", "JPG image": "jpg"}
+
+
 def _render_download(prescription_id: int):
     full = report_service.get_report(prescription_id)
     if not full:
         st.error("This report could not be loaded.")
         return
+
+    c1, c2 = st.columns(2)
+    language = c1.selectbox(
+        "Report language", _REPORT_LANGUAGES, key=f"report_dl_lang_{prescription_id}",
+    )
+    format_label = c2.selectbox(
+        "Format", list(_REPORT_FORMATS.keys()), key=f"report_dl_fmt_{prescription_id}",
+    )
+    fmt = _REPORT_FORMATS[format_label]
+
     try:
-        pdf_bytes = report_pdf.render_report_pdf(full)
+        if fmt == "pdf":
+            data, mime, ext = report_pdf.render_report_pdf(full, language), "application/pdf", "pdf"
+        else:
+            data, mime, ext = (
+                report_pdf.render_report_image(full, fmt=fmt, language=language),
+                f"image/{'jpeg' if fmt == 'jpg' else fmt}", fmt,
+            )
     except RuntimeError as e:
         st.error(str(e))
         return
     st.download_button(
-        "Save PDF", data=pdf_bytes,
-        file_name=f"report_{full['patient_name'].replace(' ', '_')}_{prescription_id}.pdf",
-        mime="application/pdf", key=f"report_dl_confirm_{prescription_id}",
+        f"Save {format_label}", data=data,
+        file_name=f"report_{full['patient_name'].replace(' ', '_')}_{prescription_id}.{ext}",
+        mime=mime, key=f"report_dl_confirm_{prescription_id}",
     )
 
 

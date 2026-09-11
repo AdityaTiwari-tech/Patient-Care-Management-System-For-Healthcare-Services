@@ -72,3 +72,4 @@ The visual language leans into the cardiac focus of the schema
 palette, Fraunces for display type, Inter for UI text, JetBrains Mono
 for vitals readouts, and a small animated ECG line used as a section
 divider throughout — see `assets/styles.css`.
+./

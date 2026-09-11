@@ -11,7 +11,7 @@ import streamlit as st
 from core.config import settings
 from core.database import test_connection, init_db
 from views import auth_view, patient_dashboard, doctor_portal, admin_portal
-from views.components import load_css, ecg_divider, sidebar_nav
+from views.components import load_css, ecg_divider, sidebar_nav, theme_toggle_button
 
 # --- Chatbot audit trail -------------------------------------------------
 # Makes the agent's tool_start / tool_end / tool_error lines visible in the
@@ -62,6 +62,8 @@ def _sidebar(user) -> str:
         st.caption(f"{user.role.capitalize()} · {user.email}")
         st.write("")
         section = sidebar_nav(ROLE_NAV_ITEMS[user.role], nav_key=user.role, on_logout=_logout)
+        st.write("")
+        theme_toggle_button()
     return section
 
 

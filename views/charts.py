@@ -9,6 +9,15 @@ caption when there's no data, so callers never need their own guards.
 """
 import streamlit as st
 
+from views.components import get_theme, THEME_TOKENS
+
+# Palette and font colors are now derived from the active theme
+# (views.components.THEME_TOKENS) rather than hardcoded, so every chart
+# repaints correctly when the user flips light/dark. PALETTE/_FONT/etc.
+# below are kept as the light-theme defaults for any code that imported
+# them directly before this change — new code should call get_palette()
+# / _layout() (which already read the live theme) instead of the bare
+# constants.
 PALETTE = [
     "#3E7C6E",  # sage
     "#E1614A",  # clay
@@ -20,21 +29,56 @@ PALETTE = [
     "#C0503D",  # alert
 ]
 
-_FONT = dict(family="Inter, sans-serif", size=13, color="#23302D")
-_TITLE_FONT = dict(family="Fraunces, serif", size=16, color="#0E3B36")
-_GRID = "rgba(14,59,54,0.08)"
 _CONFIG = {"displayModeBar": False}
+
+
+def get_palette() -> list:
+    """Theme-aware chart color sequence — sage, clay, ink, success, sand,
+    slate, sage-mist, alert, in that order, pulled from whichever theme
+    is currently active."""
+    t = THEME_TOKENS[get_theme()]
+    return [t["sage"], t["clay"], t["ink"], t["success"], t["sand"], t["slate"], t["sage-mist"], t["alert"]]
+
+
+def _font():
+    t = THEME_TOKENS[get_theme()]
+    return dict(family="Inter, sans-serif", size=13, color=t["text"])
+
+
+def _title_font():
+    t = THEME_TOKENS[get_theme()]
+    return dict(family="Fraunces, serif", size=16, color=t["ink"])
+
+
+def _grid_color():
+    return "rgba(237,234,224,0.12)" if get_theme() == "dark" else "rgba(14,59,54,0.08)"
 
 
 def _layout(title: str, height: int = 300) -> dict:
     return dict(
-        title=dict(text=title, font=_TITLE_FONT, x=0, xanchor="left"),
-        font=_FONT,
+        title=dict(text=title, font=_title_font(), x=0, xanchor="left"),
+        font=_font(),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=10, r=10, t=42, b=10),
         height=height,
     )
+
+
+# Existing call sites across views/*.py pass these two light-mode hex
+# values by name (e.g. charts.bar_chart(..., color="#E1614A")). Rather
+# than touch every call site, remap the known light-mode brand hex to
+# its theme-token equivalent here — so a caller asking for "clay" or
+# "sage" gets the correct-for-theme shade without needing to know which
+# theme is active.
+_LIGHT_HEX_TO_TOKEN = {"#3E7C6E": "sage", "#E1614A": "clay"}
+
+
+def _resolve_color(color: str) -> str:
+    token_name = _LIGHT_HEX_TO_TOKEN.get(color)
+    if token_name:
+        return THEME_TOKENS[get_theme()][token_name]
+    return color
 
 
 def bar_chart(labels, values, title: str, color: str = "#3E7C6E"):
@@ -46,12 +90,12 @@ def bar_chart(labels, values, title: str, color: str = "#3E7C6E"):
 
     fig = go.Figure(go.Bar(
         x=list(labels), y=list(values),
-        marker=dict(color=color, cornerradius=6),
+        marker=dict(color=_resolve_color(color), cornerradius=6),
         hovertemplate="%{x}: <b>%{y}</b><extra></extra>",
     ))
     fig.update_layout(**_layout(title))
-    fig.update_xaxes(showgrid=False, tickfont=_FONT)
-    fig.update_yaxes(gridcolor=_GRID, zeroline=False, tickfont=_FONT)
+    fig.update_xaxes(showgrid=False, tickfont=_font())
+    fig.update_yaxes(gridcolor=_grid_color(), zeroline=False, tickfont=_font())
     st.plotly_chart(fig, use_container_width=True, config=_CONFIG)
 
 
@@ -62,19 +106,23 @@ def line_chart(x, y, title: str, series_name: str = "", color: str = "#E1614A"):
         return
     import plotly.graph_objects as go
 
+    is_clay = color == "#E1614A"  # checked against the ORIGINAL arg, before theme remapping
+    resolved_color = _resolve_color(color)
     fig = go.Figure(go.Scatter(
         x=list(x), y=list(y),
         mode="lines+markers",
         name=series_name or title,
-        line=dict(color=color, width=3, shape="spline", smoothing=0.6),
-        marker=dict(size=6, color=color),
+        line=dict(color=resolved_color, width=3, shape="spline", smoothing=0.6),
+        marker=dict(size=6, color=resolved_color),
         fill="tozeroy",
-        fillcolor="rgba(225,97,74,0.10)" if color == "#E1614A" else "rgba(62,124,110,0.10)",
+        fillcolor="rgba(255,130,104,0.14)" if (is_clay and get_theme() == "dark")
+        else "rgba(111,191,168,0.14)" if get_theme() == "dark"
+        else ("rgba(225,97,74,0.10)" if is_clay else "rgba(62,124,110,0.10)"),
         hovertemplate="%{x}: <b>%{y}</b><extra></extra>",
     ))
     fig.update_layout(**_layout(title))
-    fig.update_xaxes(showgrid=False, tickfont=_FONT)
-    fig.update_yaxes(gridcolor=_GRID, zeroline=False, tickfont=_FONT)
+    fig.update_xaxes(showgrid=False, tickfont=_font())
+    fig.update_yaxes(gridcolor=_grid_color(), zeroline=False, tickfont=_font())
     st.plotly_chart(fig, use_container_width=True, config=_CONFIG)
 
 
@@ -99,7 +147,7 @@ def _round(labels, values, title: str, hole: float, center_text: str = ""):
     fig = go.Figure(go.Pie(
         labels=list(labels), values=list(values),
         hole=hole,
-        marker=dict(colors=PALETTE[: len(labels)], line=dict(color="#FFFFFF", width=2)),
+        marker=dict(colors=get_palette()[: len(labels)], line=dict(color=THEME_TOKENS[get_theme()]["surface"], width=2)),
         textinfo="label+percent",
         textfont=dict(family="Inter, sans-serif", size=12),
         hovertemplate="%{label}: <b>%{value}</b> (%{percent})<extra></extra>",
@@ -109,7 +157,7 @@ def _round(labels, values, title: str, hole: float, center_text: str = ""):
     if hole and center_text:
         annotations.append(dict(
             text=f"<b>{center_text}</b>", showarrow=False,
-            font=dict(family="Fraunces, serif", size=20, color="#0E3B36"),
+            font=dict(family="Fraunces, serif", size=20, color=THEME_TOKENS[get_theme()]["ink"]),
         ))
     layout = _layout(title)
     layout["showlegend"] = False
